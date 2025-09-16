@@ -1,0 +1,69 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+from pathlib import Path
+
+DATA = Path("data")
+OUT_T = Path("outputs/tables"); OUT_T.mkdir(parents=True, exist_ok=True)
+OUT_F = Path("outputs/figures"); OUT_F.mkdir(parents=True, exist_ok=True)
+
+
+customers   = pd.read_csv(DATA/"customers.csv", parse_dates=["join_date"])
+daily_sales = pd.read_csv(DATA/"daily_sales.csv", parse_dates=["date"])
+orders      = pd.read_csv(DATA/"orders.csv", parse_dates=["order_date"])
+stores      = pd.read_csv(DATA/"stores.csv")
+
+ 
+orders = orders.copy()
+orders["discount"] = orders["discount"].fillna(0)
+orders_clean = orders.dropna(subset=["amount"]).copy()
+daily_sales["quarter"] = daily_sales["date"].dt.to_period("Q").astype(str)
+
+
+reg_qtr = (daily_sales
+    .groupby(["region","quarter"], as_index=False)
+    .agg(revenue=("amount","sum"), avg_discount=("discount","mean"))
+    .round(2)
+)
+reg_qtr.to_csv(OUT_T/"regional_quarter_kpis.csv", index=False)
+
+
+pivot = reg_qtr.pivot_table(values="revenue", index="region", columns="quarter", aggfunc="sum").fillna(0)
+
+
+reg_tot = daily_sales.groupby("region", as_index=False).agg(revenue=("amount","sum"))
+reg_tot["revenue_pct"] = (reg_tot["revenue"] / reg_tot["revenue"].sum() * 100).round(2)
+reg_tot.to_csv(OUT_T/"regional_totals.csv", index=False)
+
+
+top_stores = (daily_sales
+    .groupby(["store_id","region"], as_index=False)
+    .agg(revenue=("amount","sum"), avg_discount=("discount","mean"))
+    .sort_values("revenue", ascending=False)
+    .head(10)
+    .round(2)
+)
+top_stores.to_csv(OUT_T/"top_stores.csv", index=False)
+
+
+cust_region = customers[["cust_id","region"]].rename(columns={"region":"cust_region"})
+orders_left = orders_clean.merge(cust_region, on="cust_id", how="left")
+unknown_orders = orders_left["cust_region"].isna().sum()
+rev_by_cust_region = (orders_left.groupby("cust_region", dropna=False, as_index=False)
+                      .agg(revenue=("amount","sum")).round(2))
+rev_by_cust_region.to_csv(OUT_T/"revenue_by_customer_region.csv", index=False)
+print("Unknown-customer orders:", unknown_orders)
+
+
+
+
+pivot.plot(kind="bar")
+plt.title("Revenue by Region and Quarter")
+plt.xlabel("Region"); plt.ylabel("Revenue")
+plt.tight_layout(); plt.savefig(OUT_F/"revenue_by_region_quarter.png"); plt.close()
+
+top_stores.sort_values("revenue").plot(kind="barh", x="store_id", y="revenue", legend=False)
+plt.title("Top 10 Stores by Revenue")
+plt.xlabel("Revenue"); plt.ylabel("Store ID")
+plt.tight_layout(); plt.savefig(OUT_F/"top10_stores_revenue.png"); plt.close()
+
+print("Done. Check outputs/tables and outputs/figures.")
